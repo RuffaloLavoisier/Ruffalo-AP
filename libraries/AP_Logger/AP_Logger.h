@@ -5,6 +5,10 @@
 
 #include <AP_Filesystem/AP_Filesystem_Available.h>
 
+#ifndef HAL_LOGGING_ENABLED
+#define HAL_LOGGING_ENABLED 1
+#endif
+
 // set default for HAL_LOGGING_DATAFLASH_ENABLED
 #ifndef HAL_LOGGING_DATAFLASH_ENABLED
     #ifdef HAL_LOGGING_DATAFLASH
@@ -299,9 +303,7 @@ public:
     void Write_Radio(const mavlink_radio_t &packet);
     void Write_Message(const char *message);
     void Write_MessageF(const char *fmt, ...);
-    void Write_ESC(uint8_t id, uint64_t time_us, int32_t rpm, uint16_t voltage, uint16_t current, int16_t esc_temp, uint16_t current_tot, int16_t motor_temp, float error_rate = 0.0f);
     void Write_ServoStatus(uint64_t time_us, uint8_t id, float position, float force, float speed, uint8_t power_pct);
-    void Write_ESCStatus(uint64_t time_us, uint8_t id, uint32_t error_count, float voltage, float current, float temperature, int32_t rpm, uint8_t power_pct);
     void Write_Compass();
     void Write_Mode(uint8_t mode, const ModeReason reason);
 
@@ -490,7 +492,7 @@ private:
     bool _armed;
 
     // state to help us not log unneccesary RCIN values:
-    bool seen_nonzero_rcin15_or_rcin16;
+    bool should_log_rcin2;
 
     void Write_Compass_instance(uint64_t time_us, uint8_t mag_instance);
 
