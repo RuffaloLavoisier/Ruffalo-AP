@@ -182,6 +182,10 @@ void Copter::mode_change_failed(const Mode *mode, const char *reason)
 {
     gcs().send_text(MAV_SEVERITY_WARNING, "Mode change to %s failed: %s", mode->name(), reason);
     AP::logger().Write_Error(LogErrorSubsystem::FLIGHT_MODE, LogErrorCode(mode->mode_number()));
+    // make sad noise
+    if (copter.ap.initialised) {
+        AP_Notify::events.user_mode_change_failed = 1;
+    }
 }
 
 // set_mode - change flight mode and perform any necessary initialisation
@@ -190,12 +194,26 @@ void Copter::mode_change_failed(const Mode *mode, const char *reason)
 // ACRO, STABILIZE, ALTHOLD, LAND, DRIFT and SPORT can always be set successfully but the return state of other flight modes should be checked and the caller should deal with failures appropriately
 bool Copter::set_mode(Mode::Number mode, ModeReason reason)
 {
+    // update last reason
+    const ModeReason last_reason = _last_reason;
+    _last_reason = reason;
 
     // return immediately if we are already in the desired mode
     if (mode == flightmode->mode_number()) {
         control_mode_reason = reason;
+        // make happy noise
+        if (copter.ap.initialised && (reason != last_reason)) {
+            AP_Notify::events.user_mode_change = 1;
+        }
         return true;
     }
+
+#if MODE_AUTO_ENABLED == ENABLED
+    if (mode == Mode::Number::AUTO_RTL) {
+        // Special case for AUTO RTL, not a true mode, just AUTO in disguise
+        return mode_auto.jump_to_landing_sequence_auto_RTL(reason);
+    }
+#endif
 
     Mode *new_flightmode = mode_from_mode_num((Mode::Number)mode);
     if (new_flightmode == nullptr) {
@@ -298,6 +316,11 @@ bool Copter::set_mode(Mode::Number mode, ModeReason reason)
 
     // update notify object
     notify_flight_mode();
+
+    // make happy noise
+    if (copter.ap.initialised) {
+        AP_Notify::events.user_mode_change = 1;
+    }
 
     // return success
     return true;
@@ -497,7 +520,12 @@ int32_t Mode::get_alt_above_ground_cm(void)
 void Mode::land_run_vertical_control(bool pause_descent)
 {
     float cmb_rate = 0;
+    bool ignore_descent_limit = false;
     if (!pause_descent) {
+
+        // do not ignore limits until we have slowed down for landing
+        ignore_descent_limit = (MAX(g2.land_alt_low,100) > get_alt_above_ground_cm()) || copter.ap.land_complete_maybe;
+
         float max_land_descent_velocity;
         if (g.land_speed_high > 0) {
             max_land_descent_velocity = -g.land_speed_high;
@@ -531,7 +559,7 @@ void Mode::land_run_vertical_control(bool pause_descent)
     }
 
     // update altitude target and call position controller
-    pos_control->set_pos_target_z_from_climb_rate_cm(cmb_rate, true);
+    pos_control->set_pos_target_z_from_climb_rate_cm(cmb_rate, ignore_descent_limit);
     pos_control->update_z_controller();
 }
 
@@ -745,7 +773,7 @@ float Mode::get_pilot_desired_yaw_rate(int16_t stick_angle)
     }
 
     // range check expo
-    g2.acro_y_expo = constrain_float(g2.acro_y_expo, 0.0f, 1.0f);
+    g2.acro_y_expo = constrain_float(g2.acro_y_expo, -0.5f, 1.0f);
 
     // calculate yaw rate request
     float yaw_request;

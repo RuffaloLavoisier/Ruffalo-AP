@@ -134,14 +134,19 @@ void AP_Logger_File::periodic_1Hz()
     }
     
     if (_initialised &&
+        !start_new_log_pending &&
         _write_fd == -1 && _read_fd == -1 &&
         logging_enabled() &&
-        !recent_open_error() &&
-        !hal.util->get_soft_armed()) {
+        !recent_open_error()) {
         // retry logging open. This allows for booting with
         // LOG_DISARMED=1 with a bad microSD or no microSD. Once a
         // card is inserted then logging starts
-        start_new_log();
+        // this also allows for logging to start after forced arming
+        if (!hal.util->get_soft_armed()) {
+            start_new_log();
+        } else {
+            start_new_log_pending = true;
+        }
     }
 
     if (!io_thread_alive()) {
@@ -161,6 +166,11 @@ void AP_Logger_File::periodic_1Hz()
         // dead it may not release lock...
         _write_fd = -1;
         _initialised = false;
+    }
+
+    if (rate_limiter == nullptr && _front._params.file_ratemax > 0) {
+        // setup rate limiting
+        rate_limiter = new AP_Logger_RateLimiter(_front, _front._params.file_ratemax);
     }
 }
 
@@ -435,17 +445,11 @@ bool AP_Logger_File::StartNewLogOK() const
     if (recent_open_error()) {
         return false;
     }
-    if (hal.scheduler->in_main_thread() &&
-        hal.util->get_soft_armed() &&
-        AP_HAL::millis() - hal.util->get_last_armed_change() > 3000) {
-        // when we create the log while arming we are armed and the
-        // creation is in the main loop. We generally don't want to
-        // allow logs to start in main thread while armed, but we
-        // have an exception for the first 3s after arming to allow
-        // for the normal arming process to work. This can be removed
-        // when we move log creation to the logging thread
+#if !APM_BUILD_TYPE(APM_BUILD_Replay)
+    if (hal.scheduler->in_main_thread()) {
         return false;
     }
+#endif
     return AP_Logger_Backend::StartNewLogOK();
 }
 
@@ -716,6 +720,36 @@ void AP_Logger_File::stop_logging(void)
 }
 
 /*
+  does start_new_log in the logger thread
+ */
+void AP_Logger_File::PrepForArming_start_logging()
+{
+    if (logging_started()) {
+        return;
+    }
+
+    uint32_t start_ms = AP_HAL::millis();
+    const uint32_t open_limit_ms = 1000;
+
+    /*
+      log open happens in the io_timer thread. We allow for a maximum
+      of 1s to complete the open
+     */
+    start_new_log_pending = true;
+    EXPECT_DELAY_MS(1000);
+    while (AP_HAL::millis() - start_ms < open_limit_ms) {
+        if (logging_started()) {
+            break;
+        }
+#if !APM_BUILD_TYPE(APM_BUILD_Replay) && !defined(HAL_BUILD_AP_PERIPH)
+        // keep the EKF ticking over
+        AP::ahrs().update();
+#endif
+        hal.scheduler->delay(1);
+    }
+}
+
+/*
   start writing to a new log file
  */
 void AP_Logger_File::start_new_log(void)
@@ -865,6 +899,11 @@ void AP_Logger_File::flush(void)
 
 void AP_Logger_File::io_timer(void)
 {
+    if (start_new_log_pending) {
+        start_new_log();
+        start_new_log_pending = false;
+    }
+
     uint32_t tnow = AP_HAL::millis();
     _io_timer_heartbeat = tnow;
 
@@ -987,7 +1026,7 @@ bool AP_Logger_File::io_thread_alive() const
     // the IO thread is working with hardware - writing to a physical
     // disk.  Unfortunately these hardware devices do not obey our
     // SITL speedup options, so we allow for it here.
-    SITL::SITL *sitl = AP::sitl();
+    SITL::SIM *sitl = AP::sitl();
     if (sitl != nullptr) {
         timeout_ms *= sitl->speedup;
     }

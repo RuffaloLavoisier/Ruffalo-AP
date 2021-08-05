@@ -175,7 +175,7 @@ const AP_Scheduler::Task Copter::scheduler_tasks[] = {
 #if ADVANCED_FAILSAFE == ENABLED
     SCHED_TASK(afs_fs_check,          10,    100),
 #endif
-#if AC_TERRAIN == ENABLED
+#if AP_TERRAIN_AVAILABLE
     SCHED_TASK(terrain_update,        10,    100),
 #endif
 #if GRIPPER_ENABLED == ENABLED
@@ -270,6 +270,7 @@ void Copter::fast_loop()
     AP_Vehicle::fast_loop();
 }
 
+#ifdef ENABLE_SCRIPTING
 // start takeoff to given altitude (for use by scripting)
 bool Copter::start_takeoff(float alt)
 {
@@ -336,6 +337,7 @@ bool Copter::set_target_angle_and_climbrate(float roll_deg, float pitch_deg, flo
     mode_guided.set_angle(q, climb_rate_ms*100, use_yaw_rate, radians(yaw_rate_degs), false);
     return true;
 }
+#endif // ENABLE_SCRIPTING
 
 
 // rc_loops - reads user input from transmitter/receiver
@@ -378,7 +380,7 @@ void Copter::update_batt_compass(void)
     // read battery before compass because it may be used for motor interference compensation
     battery.read();
 
-    if(AP::compass().enabled()) {
+    if(AP::compass().available()) {
         // update compass with throttle value - used for compassmot
         compass.set_throttle(motors->get_throttle());
         compass.set_voltage(battery.voltage());
@@ -447,12 +449,6 @@ void Copter::ten_hz_logging_loop()
 // twentyfive_hz_logging - should be run at 25hz
 void Copter::twentyfive_hz_logging()
 {
-#if HIL_MODE != HIL_MODE_DISABLED
-    // HIL for a copter needs very fast update of the servo values
-    gcs().send_message(MSG_SERVO_OUTPUT_RAW);
-#endif
-
-#if HIL_MODE == HIL_MODE_DISABLED
     if (should_log(MASK_LOG_ATTITUDE_FAST)) {
         Log_Write_EKF_POS();
     }
@@ -460,7 +456,6 @@ void Copter::twentyfive_hz_logging()
     if (should_log(MASK_LOG_IMU)) {
         AP::ins().Write_IMU();
     }
-#endif
 
 #if MODE_AUTOROTATE_ENABLED == ENABLED
     if (should_log(MASK_LOG_ATTITUDE_MED) || should_log(MASK_LOG_ATTITUDE_FAST)) {
@@ -602,13 +597,6 @@ void Copter::update_super_simple_bearing(bool force_update)
 
 void Copter::read_AHRS(void)
 {
-    // Perform IMU calculations and get attitude info
-    //-----------------------------------------------
-#if HIL_MODE != HIL_MODE_DISABLED
-    // update hil before ahrs update
-    gcs().update();
-#endif
-
     // we tell AHRS to skip INS update as we have already done it in fast_loop()
     ahrs.update(true);
 }

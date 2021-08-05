@@ -138,6 +138,7 @@ public:
     friend class GCS_Plane;
     friend class RC_Channel_Plane;
     friend class RC_Channels_Plane;
+    friend class Tailsitter;
 
     friend class Mode;
     friend class ModeCircle;
@@ -204,13 +205,13 @@ private:
     AP_L1_Control L1_controller{ahrs, &TECS_controller};
 
     // Attitude to servo controllers
-    AP_RollController rollController{ahrs, aparm};
-    AP_PitchController pitchController{ahrs, aparm};
-    AP_YawController yawController{ahrs, aparm};
-    AP_SteerController steerController{ahrs};
+    AP_RollController rollController{aparm};
+    AP_PitchController pitchController{aparm};
+    AP_YawController yawController{aparm};
+    AP_SteerController steerController{};
 
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
-    SITL::SITL sitl;
+    SITL::SIM sitl;
 #endif
 
     // Training mode
@@ -643,7 +644,7 @@ private:
 
     // Outback Challenge Failsafe Support
 #if ADVANCED_FAILSAFE == ENABLED
-    AP_AdvancedFailsafe_Plane afs {mission};
+    AP_AdvancedFailsafe_Plane afs;
 #endif
 
     /*
@@ -854,9 +855,6 @@ private:
     void calc_nav_yaw_course(void);
     void calc_nav_yaw_ground(void);
 
-    // GCS_Mavlink.cpp
-    void send_servo_out(mavlink_channel_t chan);
-
     // Log.cpp
     void Log_Write_Fast(void);
     void Log_Write_Attitude(void);
@@ -868,7 +866,6 @@ private:
     void Log_Write_Status();
     void Log_Write_RC(void);
     void Log_Write_Vehicle_Startup_Messages();
-    void Log_Write_AOA_SSA();
     void Log_Write_AETR();
     void Log_Write_MavCmdI(const mavlink_command_int_t &packet);
     void log_init();
@@ -953,6 +950,9 @@ private:
 
     // ArduPlane.cpp
     void disarm_if_autoland_complete();
+# if OSD_ENABLED
+    void get_osd_roll_pitch_rad(float &roll, float &pitch) const override;
+#endif
     float tecs_hgt_afe(void);
     void efi_update(void);
     void get_scheduler_tasks(const AP_Scheduler::Task *&tasks,
@@ -1142,10 +1142,18 @@ private:
 
     FlareMode flare_mode;
 
+    // expo handling
+    float roll_in_expo(bool use_dz) const;
+    float pitch_in_expo(bool use_dz) const;
+    float rudder_in_expo(bool use_dz) const;
+
 public:
     void failsafe_check(void);
+#ifdef ENABLE_SCRIPTING
     bool set_target_location(const Location& target_loc) override;
     bool get_target_location(Location& target_loc) override;
+#endif // ENABLE_SCRIPTING
+
 };
 
 extern Plane plane;

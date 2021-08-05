@@ -65,7 +65,7 @@ const AP_Param::GroupInfo AP_Vehicle::var_info[] = {
 };
 
 // reference to the vehicle. using AP::vehicle() here does not work on clang
-#if APM_BUILD_TYPE(APM_BUILD_UNKNOWN)
+#if APM_BUILD_TYPE(APM_BUILD_UNKNOWN) || APM_BUILD_TYPE(APM_BUILD_AP_Periph)
 AP_Vehicle& vehicle = *AP_Vehicle::get_singleton();
 #else
 extern AP_Vehicle& vehicle;
@@ -403,6 +403,13 @@ void AP_Vehicle::publish_osd_info()
     nav_info.wp_number = mission->get_current_nav_index();
     osd->set_nav_info(nav_info);
 }
+
+void AP_Vehicle::get_osd_roll_pitch_rad(float &roll, float &pitch) const
+{
+    roll = ahrs.roll;
+    pitch = ahrs.pitch;
+}
+
 #endif
 
 AP_Vehicle *AP_Vehicle::_singleton = nullptr;

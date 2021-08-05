@@ -20,7 +20,7 @@
 #include <AP_Common/AP_Common.h>
 
 #include "AP_CANManager.h"
-#if HAL_MAX_CAN_PROTOCOL_DRIVERS > 1 && !HAL_MINIMIZE_FEATURES && HAL_ENABLE_LIBUAVCAN_DRIVERS
+#if HAL_MAX_CAN_PROTOCOL_DRIVERS > 1 && !HAL_MINIMIZE_FEATURES && HAL_CANMANAGER_ENABLED
 #include "AP_CANTester.h"
 #include <AP_SerialManager/AP_SerialManager.h>
 #include <stdio.h>
@@ -53,7 +53,7 @@ const AP_Param::GroupInfo CANTester::var_info[] = {
 
 };
 
-#define debug_can(level_debug, fmt, args...) do { AP::can().log_text(level_debug, "CANTester",  fmt, #args); } while (0)
+#define debug_can(level_debug, fmt, args...) do { AP::can().log_text(level_debug, "CANTester",  fmt, ##args); } while (0)
 
 bool CANTester::add_interface(AP_HAL::CANIface* can_iface)
 {

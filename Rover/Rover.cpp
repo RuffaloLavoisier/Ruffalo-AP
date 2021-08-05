@@ -135,6 +135,7 @@ Rover::Rover(void) :
 {
 }
 
+#ifdef ENABLE_SCRIPTING
 // set target location (for use by scripting)
 bool Rover::set_target_location(const Location& target_loc)
 {
@@ -213,6 +214,7 @@ bool Rover::get_control_output(AP_Vehicle::ControlOutput control_output, float &
     }
     return false;
 }
+#endif // ENABLE_SCRIPTING
 
 #if STATS_ENABLED == ENABLED
 /*
@@ -230,11 +232,6 @@ void Rover::stats_update(void)
 void Rover::ahrs_update()
 {
     arming.update_soft_armed();
-
-#if HIL_MODE != HIL_MODE_DISABLED
-    // update hil before AHRS update
-    gcs().update();
-#endif
 
     // AHRS may use movement to calculate heading
     update_ahrs_flyforward();

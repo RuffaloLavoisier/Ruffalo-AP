@@ -22,6 +22,7 @@
 // auto_init - initialise auto controller
 bool ModeAuto::init(bool ignore_checks)
 {
+    auto_RTL = false;
     if (mission.num_commands() > 1 || ignore_checks) {
         _mode = SubMode::LOITER;
 
@@ -64,6 +65,8 @@ void ModeAuto::exit()
 #if HAL_MOUNT_ENABLED
     copter.camera_mount.set_mode_to_default();
 #endif  // HAL_MOUNT_ENABLED
+
+    auto_RTL = false;
 }
 
 // auto_run - runs the auto controller
@@ -141,12 +144,34 @@ void ModeAuto::run()
         payload_place_run();
         break;
     }
+
+    // only pretend to be in auto RTL so long as mission still thinks its in a landing sequence or the mission has completed
+    if (!(mission.get_in_landing_sequence_flag() || mission.state() == AP_Mission::mission_state::MISSION_COMPLETE)) {
+        auto_RTL = false;
+    }
 }
 
 bool ModeAuto::allows_arming(AP_Arming::Method method) const
 {
-    return (copter.g2.auto_options & (uint32_t)Options::AllowArming) != 0;
+    return ((copter.g2.auto_options & (uint32_t)Options::AllowArming) != 0) && !auto_RTL;
 };
+
+// Go straight to landing sequence via DO_LAND_START, if succeeds pretend to be Auto RTL mode
+bool ModeAuto::jump_to_landing_sequence_auto_RTL(ModeReason reason)
+{
+    if (mission.jump_to_landing_sequence()) {
+        mission.set_force_resume(true);
+        if (set_mode(Mode::Number::AUTO, reason)) {
+            auto_RTL = true;
+            return true;
+        }
+        // mode change failed, revert force resume flag
+        mission.set_force_resume(false);
+        return false;
+    }
+    gcs().send_text(MAV_SEVERITY_INFO, "No landing sequence found");
+    return false;
+}
 
 // auto_loiter_start - initialises loitering in auto mode
 //  returns success/failure because this can be called by exit_mission
@@ -255,7 +280,7 @@ void ModeAuto::wp_start(const Location& dest_loc)
 void ModeAuto::land_start()
 {
     // set target to stopping point
-    Vector3f stopping_point;
+    Vector2f stopping_point;
     loiter_nav->get_stopping_point_xy(stopping_point);
 
     // call location specific land start function
@@ -263,7 +288,7 @@ void ModeAuto::land_start()
 }
 
 // auto_land_start - initialises controller to implement a landing
-void ModeAuto::land_start(const Vector3f& destination)
+void ModeAuto::land_start(const Vector2f& destination)
 {
     _mode = SubMode::LAND;
 
@@ -324,7 +349,7 @@ void ModeAuto::circle_movetoedge_start(const Location &circle_center, float radi
         }
 
         // if we are outside the circle, point at the edge, otherwise hold yaw
-        const Vector3f &circle_center_neu = copter.circle_nav->get_center();
+        const Vector3p &circle_center_neu = copter.circle_nav->get_center();
         const Vector3f &curr_pos = inertial_nav.get_position();
         float dist_to_center = norm(circle_center_neu.x - curr_pos.x, circle_center_neu.y - curr_pos.y);
         // initialise yaw
@@ -392,7 +417,7 @@ bool ModeAuto::is_taking_off() const
 void ModeAuto::payload_place_start()
 {
     // set target to stopping point
-    Vector3f stopping_point;
+    Vector2f stopping_point;
     loiter_nav->get_stopping_point_xy(stopping_point);
 
     // call location specific place start function
@@ -528,6 +553,9 @@ bool ModeAuto::start_command(const AP_Mission::Mission_Command& cmd)
         break;
 #endif
 
+    case MAV_CMD_DO_LAND_START:
+        break;
+
     default:
         // unable to use the command, allow the vehicle to try the next command
         return false;
@@ -657,7 +685,7 @@ int32_t ModeAuto::wp_bearing() const
     }
 }
 
-bool ModeAuto::get_wp(Location& destination)
+bool ModeAuto::get_wp(Location& destination) const
 {
     switch (_mode) {
     case SubMode::NAVGUIDED:
@@ -766,6 +794,7 @@ bool ModeAuto::verify_command(const AP_Mission::Mission_Command& cmd)
     case MAV_CMD_DO_GUIDED_LIMITS:
     case MAV_CMD_DO_FENCE_ENABLE:
     case MAV_CMD_DO_WINCH:
+    case MAV_CMD_DO_LAND_START:
         cmd_complete = true;
         break;
 
@@ -988,7 +1017,7 @@ void ModeAuto::loiter_to_alt_run()
 }
 
 // auto_payload_place_start - initialises controller to implement placement of a load
-void ModeAuto::payload_place_start(const Vector3f& destination)
+void ModeAuto::payload_place_start(const Vector2f& destination)
 {
     _mode = SubMode::NAV_PAYLOAD_PLACE;
     nav_payload_place.state = PayloadPlaceStateType_Calibrating_Hover_Start;
@@ -1253,7 +1282,7 @@ void ModeAuto::do_loiter_unlimited(const AP_Mission::Mission_Command& cmd)
     if (target_loc.lat == 0 && target_loc.lng == 0) {
         // To-Do: make this simpler
         Vector3f temp_pos;
-        copter.wp_nav->get_wp_stopping_point_xy(temp_pos);
+        copter.wp_nav->get_wp_stopping_point_xy(temp_pos.xy());
         const Location temp_loc(temp_pos, Location::AltFrame::ABOVE_ORIGIN);
         target_loc.lat = temp_loc.lat;
         target_loc.lng = temp_loc.lng;
@@ -1501,7 +1530,7 @@ void ModeAuto::do_mount_control(const AP_Mission::Mission_Command& cmd)
     // if vehicle has a camera mount but it doesn't do pan control then yaw the entire vehicle instead
     if ((copter.camera_mount.get_mount_type() != copter.camera_mount.MountType::Mount_Type_None) &&
         !copter.camera_mount.has_pan_control()) {
-        auto_yaw.set_fixed_yaw(cmd.content.mount_control.yaw,0.0f,0,false);
+        auto_yaw.set_yaw_angle_rate(cmd.content.mount_control.yaw,0.0f);
     }
     // pass the target angles to the camera mount
     copter.camera_mount.set_angle_targets(cmd.content.mount_control.roll, cmd.content.mount_control.pitch, cmd.content.mount_control.yaw);
@@ -1588,7 +1617,7 @@ bool ModeAuto::verify_land()
             // check if we've reached the location
             if (copter.wp_nav->reached_wp_destination()) {
                 // get destination so we can use it for loiter target
-                const Vector3f& dest = copter.wp_nav->get_wp_destination();
+                const Vector2f& dest = copter.wp_nav->get_wp_destination().xy();
 
                 // initialise landing controller
                 land_start(dest);

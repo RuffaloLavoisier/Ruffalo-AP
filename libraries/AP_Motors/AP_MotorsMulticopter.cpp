@@ -37,8 +37,8 @@ const AP_Param::GroupInfo AP_MotorsMulticopter::var_info[] = {
 
     // @Param: THST_EXPO
     // @DisplayName: Thrust Curve Expo
-    // @Description: Motor thrust curve exponent (from 0 for linear to 1.0 for second order curve)
-    // @Range: 0.25 0.8
+    // @Description: Motor thrust curve exponent (0.0 for linear to 1.0 for second order curve)
+    // @Range: -1.0 1.0
     // @User: Advanced
     AP_GROUPINFO("THST_EXPO", 8, AP_MotorsMulticopter, _thrust_curve_expo, AP_MOTORS_THST_EXPO_DEFAULT),
 
@@ -78,7 +78,7 @@ const AP_Param::GroupInfo AP_MotorsMulticopter::var_info[] = {
     // @Param: PWM_TYPE
     // @DisplayName: Output PWM type
     // @Description: This selects the output PWM type, allowing for normal PWM continuous output, OneShot, brushed or DShot motor output
-    // @Values: 0:Normal,1:OneShot,2:OneShot125,3:Brushed,4:DShot150,5:DShot300,6:DShot600,7:DShot1200
+    // @Values: 0:Normal,1:OneShot,2:OneShot125,3:Brushed,4:DShot150,5:DShot300,6:DShot600,7:DShot1200,8:PWMRange
     // @User: Advanced
     // @RebootRequired: True
     AP_GROUPINFO("PWM_TYPE", 15, AP_MotorsMulticopter, _pwm_type, PWM_TYPE_NORMAL),
@@ -339,13 +339,13 @@ float AP_MotorsMulticopter::get_current_limit_max_throttle()
 float AP_MotorsMulticopter::apply_thrust_curve_and_volt_scaling(float thrust) const
 {
     float throttle_ratio = thrust;
-    // apply thrust curve - domain 0.0 to 1.0, range 0.0 to 1.0
+    // apply thrust curve - domain -1.0 to 1.0, range -1.0 to 1.0
     float thrust_curve_expo = constrain_float(_thrust_curve_expo, -1.0f, 1.0f);
-    if (fabsf(thrust_curve_expo) < 0.001) {
+    if (is_zero(thrust_curve_expo)) {
         // zero expo means linear, avoid floating point exception for small values
-        return thrust;
+        return _lift_max * thrust;
     }
-    if (!is_zero(_batt_voltage_filt.get())) {
+    if (is_positive(_batt_voltage_filt.get())) {
         throttle_ratio = ((thrust_curve_expo - 1.0f) + safe_sqrt((1.0f - thrust_curve_expo) * (1.0f - thrust_curve_expo) + 4.0f * thrust_curve_expo * _lift_max * thrust)) / (2.0f * thrust_curve_expo * _batt_voltage_filt.get());
     } else {
         throttle_ratio = ((thrust_curve_expo - 1.0f) + safe_sqrt((1.0f - thrust_curve_expo) * (1.0f - thrust_curve_expo) + 4.0f * thrust_curve_expo * _lift_max * thrust)) / (2.0f * thrust_curve_expo);
@@ -512,8 +512,9 @@ void AP_MotorsMulticopter::set_throttle_range(int16_t radio_min, int16_t radio_m
     _throttle_radio_min = radio_min;
     _throttle_radio_max = radio_max;
 
-    // if all outputs are digital adjust the range
-    if (SRV_Channels::have_digital_outputs(get_motor_mask())) {
+    // if all outputs are digital adjust the range. We also do this for type PWM_RANGE, as those use the
+    // scaled output, which is then mapped to PWM via the SRV_Channel library
+    if (SRV_Channels::have_digital_outputs(get_motor_mask()) || (_pwm_type == PWM_TYPE_PWM_RANGE)) {
         _pwm_min = 1000;
         _pwm_max = 2000;
     }

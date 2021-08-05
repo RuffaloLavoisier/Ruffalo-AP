@@ -124,9 +124,9 @@ void JSON::output_servos(const struct sitl_input &input)
     This parser does not do any syntax checking, and is not at all
     general purpose
 */
-uint16_t JSON::parse_sensors(const char *json)
+uint32_t JSON::parse_sensors(const char *json)
 {
-    uint16_t received_bitmask = 0;
+    uint32_t received_bitmask = 0;
 
     //printf("%s\n", json);
     for (uint16_t i=0; i<ARRAY_SIZE(keytable); i++) {
@@ -184,6 +184,16 @@ uint16_t JSON::parse_sensors(const char *json)
                 break;
             }
 
+            case DATA_VECTOR3D: {
+                Vector3d *v = (Vector3d *)key.ptr;
+                if (sscanf(p, "[%lf, %lf, %lf]", &v->x, &v->y, &v->z) != 3) {
+                    printf("Failed to parse Vector3f for %s/%s\n", key.section, key.key);
+                    return received_bitmask;
+                }
+                //printf("%s/%s = %f, %f, %f\n", key.section, key.key, v->x, v->y, v->z);
+                break;
+            }
+
             case QUATERNION: {
                 Quaternion *v = static_cast<Quaternion*>(key.ptr);
                 if (sscanf(p, "[%f, %f, %f, %f]", &(v->q1), &(v->q2), &(v->q3), &(v->q4)) != 4) {
@@ -192,6 +202,11 @@ uint16_t JSON::parse_sensors(const char *json)
                 }
                 break;
             }
+
+            case BOOLEAN:
+                *((bool *)key.ptr) = strtoull(p, nullptr, 10) != 0;
+                //printf("%s/%s = %i\n", key.section, key.key, *((unit8_t *)key.ptr));
+                break;
 
         }
     }
@@ -236,7 +251,7 @@ void JSON::recv_fdm(const struct sitl_input &input)
         return;
     }
 
-    const uint16_t received_bitmask = parse_sensors((const char *)(p1+1));
+    const uint32_t received_bitmask = parse_sensors((const char *)(p1+1));
     if (received_bitmask == 0) {
         // did not receve one of the mandatory fields
         printf("Did not contain all mandatory fields\n");
@@ -274,6 +289,8 @@ void JSON::recv_fdm(const struct sitl_input &input)
     gyro = state.imu.gyro;
     velocity_ef = state.velocity;
     position = state.position;
+    position.xy() += origin.get_distance_NE_double(home);
+    use_time_sync = !state.no_time_sync;
 
     // deal with euler or quaternion attitude
     if ((received_bitmask & QUAT_ATT) != 0) {
@@ -331,8 +348,9 @@ void JSON::recv_fdm(const struct sitl_input &input)
 
     if (is_positive(deltat) && deltat < 0.1) {
         // time in us to hz
-        adjust_frame_time(1.0 / deltat);
-
+        if (use_time_sync) {
+            adjust_frame_time(1.0 / deltat);
+        }
         // match actual frame rate with desired speedup
         time_advance();
     }
@@ -426,7 +444,7 @@ void JSON::update(const struct sitl_input &input)
 #if 0
     // report frame rate
     if (frame_counter % 1000 == 0) {
-        printf("FPS %.2f\n", achieved_rate_hz); // this is instantaneous rather than any clever average
+        printf("FPS %.2f\n", rate_hz); // this is instantaneous rather than any clever average
     }
 #endif
 }

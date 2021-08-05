@@ -70,7 +70,6 @@
 #include <AP_HAL/AP_HAL.h>
 #include <AP_AHRS/AP_AHRS.h>
 #include <AP_AHRS/AP_AHRS_DCM.h>
-#include <AP_AHRS/AP_AHRS_NavEKF.h>
 #include <AP_Common/AP_Common.h>
 #include <AP_Param/AP_Param.h>
 #include <AP_Mission/AP_Mission.h>
@@ -241,6 +240,7 @@ enum class LogErrorCode : uint8_t {
 class AP_Logger
 {
     friend class AP_Logger_Backend; // for _num_types
+    friend class AP_Logger_RateLimiter;
 
 public:
     FUNCTOR_TYPEDEF(vehicle_startup_message_Writer, void);
@@ -326,9 +326,11 @@ public:
 
     void Write(const char *name, const char *labels, const char *fmt, ...);
     void Write(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, ...);
+    void WriteStreaming(const char *name, const char *labels, const char *fmt, ...);
+    void WriteStreaming(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, ...);
     void WriteCritical(const char *name, const char *labels, const char *fmt, ...);
     void WriteCritical(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, ...);
-    void WriteV(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, va_list arg_list, bool is_critical=false);
+    void WriteV(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, va_list arg_list, bool is_critical=false, bool is_streaming=false);
 
     // This structure provides information on the internal member data of a PID for logging purposes
     struct PID_Info {
@@ -385,6 +387,9 @@ public:
         AP_Int8 mav_bufsize; // in kilobytes
         AP_Int16 file_timeout; // in seconds
         AP_Int16 min_MB_free;
+        AP_Float file_ratemax;
+        AP_Float mav_ratemax;
+        AP_Float blk_ratemax;
     } _params;
 
     const struct LogStructure *structure(uint16_t num) const;
