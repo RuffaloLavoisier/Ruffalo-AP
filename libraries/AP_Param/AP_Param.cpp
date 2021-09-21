@@ -45,7 +45,7 @@ uint16_t AP_Param::sentinal_offset;
 // singleton instance
 AP_Param *AP_Param::_singleton;
 
-#define ENABLE_DEBUG 1
+#define ENABLE_DEBUG 0
 
 #if ENABLE_DEBUG
  # define Debug(fmt, args ...)  do {::printf("%s:%d: " fmt "\n", __FUNCTION__, __LINE__, ## args); } while(0)
@@ -1682,6 +1682,9 @@ AP_Param *AP_Param::next_group(const uint16_t vindex, const struct GroupInfo *gr
                     ((AP_Int8 *)ret)->get() == 0) {
                     token->last_disabled = 1;
                 }
+                if (group_info[i].flags & AP_PARAM_FLAG_HIDDEN) {
+                    continue;
+                }
                 return ret;
             }
             if (group_id(group_info, group_base, i, group_shift) == token->group_element) {
@@ -2120,11 +2123,13 @@ bool AP_Param::read_param_defaults_file(const char *filename, bool last_pass)
         AP_Param *vp = find(pname, &var_type);
         if (!vp) {
             if (last_pass) {
+#if ENABLE_DEBUG
                 ::printf("Ignored unknown param %s in defaults file %s\n",
                          pname, filename);
                 hal.console->printf(
                          "Ignored unknown param %s in defaults file %s\n",
                          pname, filename);
+#endif
             }
             continue;
         }
@@ -2316,11 +2321,13 @@ void AP_Param::load_embedded_param_defaults(bool last_pass)
         AP_Param *vp = find(pname, &var_type);
         if (!vp) {
             if (last_pass) {
+#if ENABLE_DEBUG
                 ::printf("Ignored unknown param %s from embedded region (offset=%u)\n",
                          pname, unsigned(ptr - param_defaults_data.data));
                 hal.console->printf(
                          "Ignored unknown param %s from embedded region (offset=%u)\n",
                          pname, unsigned(ptr - param_defaults_data.data));
+#endif
             }
             continue;
         }

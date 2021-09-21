@@ -336,8 +336,11 @@ public:
     // write EKF information to on-board logs
     void Log_Write();
 
-    // are we using an external yaw source? This is needed by AHRS attitudes_consistent check
-    bool using_external_yaw(void) const;
+    // are we using (aka fusing) a non-compass yaw?
+    bool using_noncompass_for_yaw() const;
+
+    // are we using (aka fusing) external nav for yaw?
+    bool using_extnav_for_yaw() const;
 
     // check if configured to use GPS for horizontal position estimation
     bool configuredToUseGPSForPosXY(void) const;
@@ -427,6 +430,7 @@ private:
     AP_Int8 _betaMask;              // Bitmask controlling when sideslip angle fusion is used to estimate non wind states
     AP_Float _ognmTestScaleFactor;  // Scale factor applied to the thresholds used by the on ground not moving test
     AP_Float _baroGndEffectDeadZone;// Dead zone applied to positive baro height innovations when in ground effect (m)
+    AP_Int8 _primary_core;          // initial core number
 
 // Possible values for _flowUse
 #define FLOW_USE_NONE    0

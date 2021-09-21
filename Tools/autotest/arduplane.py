@@ -530,7 +530,7 @@ class AutoTestPlane(AutoTest):
         num_wp = self.load_mission(filename, strict=strict)-1
         self.set_current_waypoint(0, check_afterwards=False)
         self.change_mode('AUTO')
-        self.wait_waypoint(1, num_wp, max_dist=60)
+        self.wait_waypoint(1, num_wp, max_dist=60, timeout=mission_timeout)
         self.wait_groundspeed(0, 0.5, timeout=mission_timeout)
         if quadplane:
             self.wait_statustext("Throttle disarmed", timeout=70)
@@ -1258,6 +1258,8 @@ class AutoTestPlane(AutoTest):
             self.set_parameter("NAVL1_LIM_BANK", 60)
             self.set_parameter("FENCE_ACTION", 1) # AC_FENCE_ACTION_RTL_AND_LAND == 1. mavutil.mavlink.FENCE_ACTION_RTL == 4
 
+            self.wait_ready_to_arm()  # need an origin to load fence
+
             self.do_fence_enable()
             self.assert_fence_sys_status(True, True, True)
 
@@ -1461,13 +1463,13 @@ class AutoTestPlane(AutoTest):
 
         # these are ordered to bookend the list with timestamps (which
         # both attitude messages have):
-        get_names = ['ATTITUDE', 'SIM_STATE', 'AHRS2', 'ATTITUDE_QUATERNION']
+        get_names = ['ATTITUDE', 'SIMSTATE', 'AHRS2', 'ATTITUDE_QUATERNION']
         msgs = self.get_messages_frame(get_names)
 
         for get_name in get_names:
             self.progress("%s: %s" % (get_name, msgs[get_name]))
 
-        simstate = msgs['SIM_STATE']
+        simstate = msgs['SIMSTATE']
         attitude = msgs['ATTITUDE']
         ahrs2 = msgs['AHRS2']
         attitude_quaternion = msgs['ATTITUDE_QUATERNION']
@@ -1612,7 +1614,7 @@ class AutoTestPlane(AutoTest):
         def validate_global_position_int_against_simstate(mav, m):
             if m.get_type() == 'GLOBAL_POSITION_INT':
                 self.gpi = m
-            elif m.get_type() == 'SIM_STATE':
+            elif m.get_type() == 'SIMSTATE':
                 self.simstate = m
             if self.gpi is None:
                 return
@@ -2968,7 +2970,7 @@ class AutoTestPlane(AutoTest):
                 mission_file = "basic-quadplane.txt"
             self.wait_ready_to_arm()
             self.arm_vehicle()
-            self.fly_mission(mission_file, strict=False, quadplane=quadplane)
+            self.fly_mission(mission_file, strict=False, quadplane=quadplane, mission_timeout=400.0)
             self.wait_disarmed()
 
     def RCDisableAirspeedUse(self):
@@ -3045,6 +3047,26 @@ class AutoTestPlane(AutoTest):
 
         if ex is not None:
             raise ex
+
+    def fly_landing_baro_drift(self):
+
+        self.customise_SITL_commandline([], wipe=True)
+
+        self.set_parameters({
+            "SIM_BARO_DRIFT": -0.02,
+            "SIM_TERRAIN": 0,
+            "RNGFND_LANDING": 1,
+            "RNGFND1_MAX_CM": 4000,
+            "LAND_SLOPE_RCALC": 2,
+            "LAND_ABORT_DEG": 2,
+        })
+
+        self.reboot_sitl()
+
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+
+        self.fly_mission("ap-circuit.txt", mission_timeout=1200)
 
     def tests(self):
         '''return list of all tests'''
@@ -3254,6 +3276,10 @@ class AutoTestPlane(AutoTest):
             ("AHRSTrim",
              "AHRS trim testing",
              self.ahrstrim),
+
+            ("Landing-Drift",
+             "Circuit with baro drift",
+             self.fly_landing_baro_drift),
 
             ("LogUpload",
              "Log upload",
