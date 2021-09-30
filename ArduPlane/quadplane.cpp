@@ -606,7 +606,7 @@ bool QuadPlane::setup(void)
     case AP_Motors::MOTOR_FRAME_DYNAMIC_SCRIPTING_MATRIX:
         break;
     default:
-        AP_BoardConfig::config_error("Unsupported Q_FRAME_CLASS %u", frame_class);
+        AP_BoardConfig::config_error("Unsupported Q_FRAME_CLASS %u", (unsigned int)(frame_class.get()));
     }
 
     // Make sure not both a tailsiter and tiltrotor
@@ -637,7 +637,7 @@ bool QuadPlane::setup(void)
     }
 
     if (!motors) {
-        AP_BoardConfig::config_error("Unable to allocate %s", "motors");
+        AP_BoardConfig::allocation_error("Unable to allocate %s", "motors");
     }
 
     AP_Param::load_object_from_eeprom(motors, motors_var_info);
@@ -645,29 +645,29 @@ bool QuadPlane::setup(void)
     // create the attitude view used by the VTOL code
     ahrs_view = ahrs.create_view(tailsitter.enabled() ? ROTATION_PITCH_90 : ROTATION_NONE, ahrs_trim_pitch);
     if (ahrs_view == nullptr) {
-        AP_BoardConfig::config_error("Unable to allocate %s", "ahrs_view");
+        AP_BoardConfig::allocation_error("Unable to allocate %s", "ahrs_view");
     }
 
     attitude_control = new AC_AttitudeControl_TS(*ahrs_view, aparm, *motors, loop_delta_t);
     if (!attitude_control) {
-        AP_BoardConfig::config_error("Unable to allocate %s", "attitude_control");
+        AP_BoardConfig::allocation_error("Unable to allocate %s", "attitude_control");
     }
 
     AP_Param::load_object_from_eeprom(attitude_control, attitude_control->var_info);
     pos_control = new AC_PosControl(*ahrs_view, inertial_nav, *motors, *attitude_control, loop_delta_t);
     if (!pos_control) {
-        AP_BoardConfig::config_error("Unable to allocate %s", "pos_control");
+        AP_BoardConfig::allocation_error("Unable to allocate %s", "pos_control");
     }
     AP_Param::load_object_from_eeprom(pos_control, pos_control->var_info);
     wp_nav = new AC_WPNav(inertial_nav, *ahrs_view, *pos_control, *attitude_control);
     if (!wp_nav) {
-        AP_BoardConfig::config_error("Unable to allocate %s", "wp_nav");
+        AP_BoardConfig::allocation_error("Unable to allocate %s", "wp_nav");
     }
     AP_Param::load_object_from_eeprom(wp_nav, wp_nav->var_info);
 
     loiter_nav = new AC_Loiter(inertial_nav, *ahrs_view, *pos_control, *attitude_control);
     if (!loiter_nav) {
-        AP_BoardConfig::config_error("Unable to allocate %s", "loiter_nav");
+        AP_BoardConfig::allocation_error("Unable to allocate %s", "loiter_nav");
     }
     AP_Param::load_object_from_eeprom(loiter_nav, loiter_nav->var_info);
 
@@ -755,8 +755,6 @@ void QuadPlane::run_esc_calibration(void)
  */
 void QuadPlane::multicopter_attitude_rate_update(float yaw_rate_cds)
 {
-    check_attitude_relax();
-
     bool use_multicopter_control = in_vtol_mode() && !tailsitter.in_vtol_transition();
     bool use_multicopter_eulers = false;
 
@@ -887,19 +885,6 @@ void QuadPlane::relax_attitude_control()
     // disable roll and yaw control for vectored tailsitters
     // if not a vectored tailsitter completely disable attitude control
     attitude_control->relax_attitude_controllers(tailsitter._is_vectored);
-}
-
-/*
-  check if we should relax the attitude controllers
-
-  We relax them whenever we will be using them after a period of
-  inactivity
- */
-void QuadPlane::check_attitude_relax(void)
-{
-    if (AP_HAL::millis() - last_att_control_ms > 100) {
-        relax_attitude_control();
-    }
 }
 
 /*
@@ -1587,7 +1572,6 @@ void QuadPlane::update_transition(void)
         // multiply by 0.1 to convert (degrees/second * milliseconds) to centi degrees
         plane.nav_pitch_cd = constrain_float(transition_initial_pitch - (tailsitter.transition_rate_fw * dt) * 0.1f * (plane.fly_inverted()?-1.0f:1.0f), -8500, 8500);
         plane.nav_roll_cd = 0;
-        check_attitude_relax();
         attitude_control->input_euler_angle_roll_pitch_euler_rate_yaw(plane.nav_roll_cd,
                                                                       plane.nav_pitch_cd,
                                                                       0);
@@ -1859,12 +1843,6 @@ void QuadPlane::update_throttle_hover()
  */
 void QuadPlane::motors_output(bool run_rate_controller)
 {
-    const uint32_t now = AP_HAL::millis();
-    if (run_rate_controller) {
-        attitude_control->rate_controller_run();
-        last_att_control_ms = now;
-    }
-
     /* Delay for ARMING_DELAY_MS after arming before allowing props to spin:
        1) for safety (OPTION_DELAY_ARMING)
        2) to allow motors to return to vertical (OPTION_DISARMED_TILT)
@@ -1903,9 +1881,19 @@ void QuadPlane::motors_output(bool run_rate_controller)
         return;
     }
 
+    const uint32_t now = AP_HAL::millis();
+    if (run_rate_controller) {
+        if (now - last_att_control_ms > 100) {
+            // relax if have been inactive
+            relax_attitude_control();
+        }
+        attitude_control->rate_controller_run();
+        last_att_control_ms = now;
+    }
+
     // see if motors should be shut down
     update_throttle_suppression();
-    
+
     motors->output();
 
     // remember when motors were last active for throttle suppression
@@ -2103,6 +2091,17 @@ void QuadPlane::poscontrol_init_approach(void)
 }
 
 /*
+  log the QPOS message
+ */
+void QuadPlane::log_QPOS(void)
+{
+    AP::logger().WriteStreaming("QPOS", "TimeUS,State,Dist", "QBf",
+                                AP_HAL::micros64(),
+                                poscontrol.get_state(),
+                                plane.auto_state.wp_distance);
+}
+
+/*
   change position control state
  */
 void QuadPlane::PosControlState::set_state(enum position_control_state s)
@@ -2128,6 +2127,7 @@ void QuadPlane::PosControlState::set_state(enum position_control_state s)
             // reset throttle descent control
             qp.thr_ctrl_land = false;
         }
+        qp.log_QPOS();
     }
     state = s;
     last_state_change_ms = AP_HAL::millis();
@@ -2150,8 +2150,6 @@ void QuadPlane::vtol_position_controller(void)
 
     // target speed when we reach position2 threshold
     const float position2_target_speed = 2.0;
-
-    check_attitude_relax();
 
     // horizontal position control
     switch (poscontrol.get_state()) {
@@ -2565,10 +2563,7 @@ void QuadPlane::vtol_position_controller(void)
     if (now_ms - poscontrol.last_log_ms >= 40) {
         // log poscontrol at 25Hz
         poscontrol.last_log_ms = now_ms;
-        AP::logger().WriteStreaming("QPOS", "TimeUS,State,Dist", "QBf",
-                           AP_HAL::micros64(),
-                           poscontrol.get_state(),
-                           plane.auto_state.wp_distance);
+        log_QPOS();
     }
 }
 
@@ -2634,8 +2629,6 @@ void QuadPlane::takeoff_controller(void)
     /*
       for takeoff we use the position controller
     */
-    check_attitude_relax();
-
     setup_target_position();
 
     // set position controller desired velocity and acceleration to zero
@@ -2684,8 +2677,6 @@ void QuadPlane::takeoff_controller(void)
 void QuadPlane::waypoint_controller(void)
 {
     setup_target_position();
-
-    check_attitude_relax();
 
     /*
       this is full copter control of auto flight
@@ -2819,12 +2810,10 @@ bool QuadPlane::do_vtol_land(const AP_Mission::Mission_Command& cmd)
     if (!setup()) {
         return false;
     }
-    attitude_control->reset_rate_controller_I_terms();
-    
+
     plane.set_next_WP(cmd.content.location);
     // initially aim for current altitude
     plane.next_WP_loc.alt = plane.current_loc.alt;
-    poscontrol.set_state(QPOS_POSITION1);
 
     // initialise the position controller
     pos_control->init_xy_controller();

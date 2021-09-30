@@ -138,6 +138,9 @@ bool ModeGuided::do_user_takeoff_start(float takeoff_alt_cm)
     // get initial alt for WP_NAVALT_MIN
     auto_takeoff_set_start_alt();
 
+    // record takeoff has not completed
+    takeoff_complete = false;
+
     return true;
 }
 
@@ -168,7 +171,7 @@ void ModeGuided::wp_control_run()
     float target_yaw_rate = 0;
     if (!copter.failsafe.radio && use_pilot_yaw()) {
         // get pilot's desired yaw rate
-        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->get_control_in());
+        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->norm_input_dz());
         if (!is_zero(target_yaw_rate)) {
             auto_yaw.set_mode(AUTO_YAW_HOLD);
         }
@@ -629,14 +632,12 @@ void ModeGuided::set_angle(const Quaternion &q, float climb_rate_cms_or_thrust, 
 void ModeGuided::takeoff_run()
 {
     auto_takeoff_run();
-    if (wp_nav->reached_wp_destination()) {
+    if (!takeoff_complete && wp_nav->reached_wp_destination()) {
+        takeoff_complete = true;
 #if LANDING_GEAR_ENABLED == ENABLED
         // optionally retract landing gear
         copter.landinggear.retract_after_takeoff();
 #endif
-
-        // change to velocity control after take off.
-        init(true);
     }
 }
 
@@ -649,7 +650,7 @@ void ModeGuided::pos_control_run()
 
     if (!copter.failsafe.radio && use_pilot_yaw()) {
         // get pilot's desired yaw rate
-        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->get_control_in());
+        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->norm_input_dz());
         if (!is_zero(target_yaw_rate)) {
             auto_yaw.set_mode(AUTO_YAW_HOLD);
         }
@@ -708,7 +709,7 @@ void ModeGuided::accel_control_run()
     float target_yaw_rate = 0;
     if (!copter.failsafe.radio && use_pilot_yaw()) {
         // get pilot's desired yaw rate
-        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->get_control_in());
+        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->norm_input_dz());
         if (!is_zero(target_yaw_rate)) {
             auto_yaw.set_mode(AUTO_YAW_HOLD);
         }
@@ -772,7 +773,7 @@ void ModeGuided::velaccel_control_run()
     float target_yaw_rate = 0;
     if (!copter.failsafe.radio && use_pilot_yaw()) {
         // get pilot's desired yaw rate
-        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->get_control_in());
+        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->norm_input_dz());
         if (!is_zero(target_yaw_rate)) {
             auto_yaw.set_mode(AUTO_YAW_HOLD);
         }
@@ -848,7 +849,7 @@ void ModeGuided::posvelaccel_control_run()
 
     if (!copter.failsafe.radio && use_pilot_yaw()) {
         // get pilot's desired yaw rate
-        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->get_control_in());
+        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->norm_input_dz());
         if (!is_zero(target_yaw_rate)) {
             auto_yaw.set_mode(AUTO_YAW_HOLD);
         }

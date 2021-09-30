@@ -727,7 +727,7 @@ class AutoTestPlane(AutoTest):
     def fly_home_land_and_disarm(self, timeout=120):
         filename = "flaps.txt"
         self.progress("Using %s to fly home" % filename)
-        self.load_mission(filename)
+        self.load_generic_mission(filename)
         self.change_mode("AUTO")
         # don't set current waypoint to 8 unless we're distant from it
         # or we arrive instantly and never see it as our current
@@ -872,6 +872,22 @@ class AutoTestPlane(AutoTest):
         self.set_rc(12, 1000)
         if x is None:
             raise NotAchievedException("No CAMERA_FEEDBACK message received")
+
+        self.wait_ready_to_arm()
+
+        original_alt = self.get_altitude()
+
+        takeoff_alt = 30
+        self.takeoff(takeoff_alt)
+        self.set_rc(12, 2000)
+        self.delay_sim_time(1)
+        self.set_rc(12, 1000)
+        x = self.mav.messages.get("CAMERA_FEEDBACK", None)
+        if abs(x.alt_rel - takeoff_alt) > 10:
+            raise NotAchievedException("Bad relalt (want=%f vs got=%f)" % (takeoff_alt, x.alt_rel))
+        if abs(x.alt_msl - (original_alt+30)) > 10:
+            raise NotAchievedException("Bad absalt (want=%f vs got=%f)" % (original_alt+30, x.alt_msl))
+        self.fly_home_land_and_disarm()
 
     def test_throttle_failsafe(self):
         self.change_mode('MANUAL')
@@ -3068,6 +3084,19 @@ class AutoTestPlane(AutoTest):
 
         self.fly_mission("ap-circuit.txt", mission_timeout=1200)
 
+    def ForcedDCM(self):
+
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+
+        self.takeoff(50)
+        self.context_collect('STATUSTEXT')
+        self.set_parameter("AHRS_EKF_TYPE", 0)
+        self.wait_statustext("DCM Active", check_context=True)
+        self.context_stop_collecting('STATUSTEXT')
+
+        self.fly_home_land_and_disarm()
+
     def tests(self):
         '''return list of all tests'''
         ret = super(AutoTestPlane, self).tests()
@@ -3280,6 +3309,14 @@ class AutoTestPlane(AutoTest):
             ("Landing-Drift",
              "Circuit with baro drift",
              self.fly_landing_baro_drift),
+
+            ("ForcedDCM",
+             "Switch to DCM mid-flight",
+             self.ForcedDCM),
+
+            ("MAVFTP",
+             "Test MAVProxy can talk FTP to autopilot",
+             self.MAVFTP),
 
             ("LogUpload",
              "Log upload",
