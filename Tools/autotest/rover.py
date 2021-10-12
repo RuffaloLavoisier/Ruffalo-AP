@@ -5677,6 +5677,49 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
                      target_compid=target_compid,
                      want_result=mavutil.mavlink.MAV_RESULT_FAILED)
 
+    def FlashStorage(self):
+        self.set_parameter("LOG_BITMASK", 1)
+        self.reboot_sitl()
+
+        self.customise_SITL_commandline([
+            "--set-storage-posix-enabled", "0",
+            "--set-storage-flash-enabled", "1",
+        ])
+        if self.get_parameter("LOG_BITMASK") == 1:
+            raise NotAchievedException("not using flash storage?")
+        self.set_parameter("LOG_BITMASK", 2)
+        self.reboot_sitl()
+        self.assert_parameter_value("LOG_BITMASK", 2)
+        self.set_parameter("LOG_BITMASK", 3)
+        self.reboot_sitl()
+        self.assert_parameter_value("LOG_BITMASK", 3)
+
+        self.customise_SITL_commandline([])
+        # make sure we're back at our original value:
+        self.assert_parameter_value("LOG_BITMASK", 1)
+
+    def FRAMStorage(self):
+        self.set_parameter("LOG_BITMASK", 1)
+        self.reboot_sitl()
+
+        self.customise_SITL_commandline([
+            "--set-storage-posix-enabled", "0",
+            "--set-storage-fram-enabled", "1",
+        ])
+        # TODO: ensure w'ere actually taking stuff from flash storage:
+#        if self.get_parameter("LOG_BITMASK") == 1:
+#            raise NotAchievedException("not using flash storage?")
+        self.set_parameter("LOG_BITMASK", 2)
+        self.reboot_sitl()
+        self.assert_parameter_value("LOG_BITMASK", 2)
+        self.set_parameter("LOG_BITMASK", 3)
+        self.reboot_sitl()
+        self.assert_parameter_value("LOG_BITMASK", 3)
+
+        self.customise_SITL_commandline([])
+        # make sure we're back at our original value:
+        self.assert_parameter_value("LOG_BITMASK", 1)
+
     def tests(self):
         '''return list of all tests'''
         ret = super(AutoTestRover, self).tests()
@@ -5898,6 +5941,14 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
             ("EndMissionBehavior",
              "Test end mission behavior",
              self.test_end_mission_behavior),
+
+            ("FlashStorage",
+             "Test flash storage (for parameters etc)",
+             self.FlashStorage),
+
+            ("FRAMStorage",
+             "Test FRAM storage (for parameters etc)",
+             self.FRAMStorage),
 
             ("LogUpload",
              "Upload logs",

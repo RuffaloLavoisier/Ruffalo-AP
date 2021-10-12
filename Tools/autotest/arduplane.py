@@ -3064,6 +3064,57 @@ class AutoTestPlane(AutoTest):
         if ex is not None:
             raise ex
 
+    def AUTOTUNE(self):
+        self.takeoff(100)
+        self.change_mode('AUTOTUNE')
+        self.context_collect('STATUSTEXT')
+        tstart = self.get_sim_time()
+        axis = "Roll"
+        rc_value = 1000
+        while True:
+            timeout = 600
+            if self.get_sim_time() - tstart > timeout:
+                raise NotAchievedException("Did not complete within %u seconds" % timeout)
+            try:
+                m = self.wait_statustext("%s: Finished" % axis, check_context=True, timeout=0.1)
+                self.progress("Got %s" % str(m))
+                if axis == "Roll":
+                    axis = "Pitch"
+                elif axis == "Pitch":
+                    break
+                else:
+                    raise ValueError("Bug: %s" % axis)
+            except AutoTestTimeoutException:
+                pass
+            self.delay_sim_time(1)
+
+            if rc_value == 1000:
+                rc_value = 2000
+            elif rc_value == 2000:
+                rc_value = 1000
+            elif rc_value == 1000:
+                rc_value = 2000
+            else:
+                raise ValueError("Bug")
+
+            if axis == "Roll":
+                self.set_rc(1, rc_value)
+                self.set_rc(2, 1500)
+            elif axis == "Pitch":
+                self.set_rc(1, 1500)
+                self.set_rc(2, rc_value)
+            else:
+                raise ValueError("Bug")
+
+        tdelta = self.get_sim_time() - tstart
+        self.progress("Finished in %0.1f seconds" % (tdelta,))
+
+        self.set_rc(1, 1500)
+        self.set_rc(2, 1500)
+
+        self.change_mode('FBWA')
+        self.fly_home_land_and_disarm(timeout=tdelta+240)
+
     def fly_landing_baro_drift(self):
 
         self.customise_SITL_commandline([], wipe=True)
@@ -3083,6 +3134,24 @@ class AutoTestPlane(AutoTest):
         self.arm_vehicle()
 
         self.fly_mission("ap-circuit.txt", mission_timeout=1200)
+
+    def DCMFallback(self):
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+
+        self.takeoff(50)
+        self.context_collect('STATUSTEXT')
+        self.set_parameter("EK3_POS_I_GATE", 25)
+        self.set_parameter("SIM_GPS_HZ", 1)
+        self.wait_statustext("DCM Active", check_context=True)
+        self.wait_statustext("EKF3 Active", check_context=True)
+        self.wait_statustext("DCM Active", check_context=True)
+        self.wait_statustext("EKF3 Active", check_context=True)
+        self.wait_statustext("DCM Active", check_context=True)
+        self.wait_statustext("EKF3 Active", check_context=True)
+        self.context_stop_collecting('STATUSTEXT')
+
+        self.fly_home_land_and_disarm()
 
     def ForcedDCM(self):
 
@@ -3314,9 +3383,17 @@ class AutoTestPlane(AutoTest):
              "Switch to DCM mid-flight",
              self.ForcedDCM),
 
+            ("DCMFallback",
+             "Really annoy the EKF and force fallback",
+             self.DCMFallback),
+
             ("MAVFTP",
              "Test MAVProxy can talk FTP to autopilot",
              self.MAVFTP),
+
+            ("AUTOTUNE",
+             "Test AutoTune mode",
+             self.AUTOTUNE),
 
             ("LogUpload",
              "Log upload",

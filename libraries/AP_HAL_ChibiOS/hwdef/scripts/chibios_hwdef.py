@@ -706,6 +706,13 @@ def write_mcu_config(f):
         f.write('#define HAL_USE_SDC TRUE\n')
         build_flags.append('USE_FATFS=yes')
         env_vars['WITH_FATFS'] = "1"
+    elif have_type_prefix('SDMMC2'):
+        f.write('// SDMMC2 available, enable POSIX filesystem support\n')
+        f.write('#define USE_POSIX\n\n')
+        f.write('#define HAL_USE_SDC TRUE\n')
+        f.write('#define STM32_SDC_USE_SDMMC2 TRUE\n')
+        build_flags.append('USE_FATFS=yes')
+        env_vars['WITH_FATFS'] = "1"
     elif have_type_prefix('SDMMC'):
         f.write('// SDMMC available, enable POSIX filesystem support\n')
         f.write('#define USE_POSIX\n\n')
@@ -737,6 +744,13 @@ def write_mcu_config(f):
         for d in defines.keys():
             v = defines[d]
             f.write("#ifndef %s\n#define %s %s\n#endif\n" % (d, d, v))
+    else:
+        defines = {}
+    # enable RNG for all H7 chips
+    if mcu_series.startswith("STM32H7") and 'HAL_USE_HW_RNG' not in defines.keys():
+        f.write("#define HAL_USE_HW_RNG TRUE\n")
+    elif 'HAL_USE_HW_RNG' not in defines.keys():
+        f.write("#define HAL_USE_HW_RNG FALSE\n")
 
     if get_config('PROCESS_STACK', required=False):
         env_vars['PROCESS_STACK'] = get_config('PROCESS_STACK')
@@ -1391,6 +1405,9 @@ def write_UART_config(f):
                 (devnames[idx], devnames[idx]))
 
     if 'IOMCU_UART' in config:
+        if not 'io_firmware.bin' in romfs:
+            error("Need io_firmware.bin in ROMFS for IOMCU")
+
         f.write('#define HAL_WITH_IO_MCU 1\n')
         idx = len(uart_list)
         f.write('#define HAL_UART_IOMCU_IDX %u\n' % idx)
@@ -2227,6 +2244,43 @@ def romfs_add_dir(subdirs):
                     relpath = os.path.normpath(os.path.join(dirname, os.path.relpath(root, romfs_dir), f))
                     romfs[relpath] = fullpath
 
+def valid_type(ptype, label):
+    '''check type of a pin line is valid'''
+    patterns = [ 'INPUT', 'OUTPUT', 'TIM\d+', 'USART\d+', 'UART\d+', 'ADC\d+',
+                'SPI\d+', 'OTG\d+', 'SWD', 'CAN\d?', 'I2C\d+', 'CS',
+                'SDMMC\d+', 'SDIO', 'QUADSPI\d' ]
+    matches = False
+    for p in patterns:
+        if re.match(p, ptype):
+            matches = True
+            break
+    if not matches:
+        return False
+    # special checks for common errors
+    m1 = re.match('TIM(\d+)', ptype)
+    m2 = re.match('TIM(\d+)_CH\d+', label)
+    if (m1 and not m2) or (m2 and not m1) or (m1 and m1.group(1) != m2.group(1)):
+        '''timer numbers need to match'''
+        return False
+    m1 = re.match('CAN(\d+)', ptype)
+    m2 = re.match('CAN(\d+)_(RX|TX)', label)
+    if (m1 and not m2) or (m2 and not m1) or (m1 and m1.group(1) != m2.group(1)):
+        '''CAN numbers need to match'''
+        return False
+    if ptype == 'OUTPUT' and re.match('US?ART\d+_(TXINV|RXINV)', label):
+        return True
+    m1 = re.match('USART(\d+)', ptype)
+    m2 = re.match('USART(\d+)_(RX|TX|CTS|RTS)', label)
+    if (m1 and not m2) or (m2 and not m1) or (m1 and m1.group(1) != m2.group(1)):
+        '''usart numbers need to match'''
+        return False
+    m1 = re.match('UART(\d+)', ptype)
+    m2 = re.match('UART(\d+)_(RX|TX|CTS|RTS)', label)
+    if (m1 and not m2) or (m2 and not m1) or (m1 and m1.group(1) != m2.group(1)):
+        '''uart numbers need to match'''
+        return False
+    return True
+
 def process_line(line):
     '''process one line of pin definition file'''
     global allpins, imu_list, compass_list, baro_list, airspeed_list
@@ -2248,6 +2302,9 @@ def process_line(line):
         except Exception:
             error("Bad pin line: %s" % a)
             return
+
+        if not valid_type(type, label):
+            error("bad type on line: %s" % a)
 
         p = generic_pin(port, pin, label, type, extra)
         af = get_alt_function(mcu_type, a[0], label)

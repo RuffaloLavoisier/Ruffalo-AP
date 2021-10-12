@@ -513,6 +513,9 @@ class sitl(Board):
             HAL_PROBE_EXTERNAL_I2C_BAROS = 1,
         )
 
+        cfg.define('HAL_WITH_SPI', 1)
+        cfg.define('HAL_WITH_RAMTRON', 1)
+
         if self.with_can:
             cfg.define('HAL_NUM_CAN_IFACES', 2)
             cfg.define('UAVCAN_EXCEPTIONS', 0)
@@ -591,9 +594,6 @@ class sitl(Board):
             if not cfg.check_SFML_Audio(env):
                 cfg.fatal("Failed to find SFML Audio libraries")
             env.CXXFLAGS += ['-DWITH_SITL_TONEALARM']
-
-        if cfg.options.sitl_flash_storage:
-            env.CXXFLAGS += ['-DSTORAGE_USE_FLASH=1']
 
         if cfg.env.DEST_OS == 'cygwin':
             env.LIB += [

@@ -89,7 +89,7 @@ const AP_Param::GroupInfo QuadPlane::var_info[] = {
     // @Range: 800 2200
     // @Increment: 1
     // @User: Standard
-    AP_GROUPINFO("THR_MIN_PWM", 22, QuadPlane, thr_min_pwm, 1000),
+    // 22: THR_MIN_PWM
 
     // @Param: THR_MAX_PWM
     // @DisplayName: Maximum PWM output
@@ -98,7 +98,7 @@ const AP_Param::GroupInfo QuadPlane::var_info[] = {
     // @Range: 800 2200
     // @Increment: 1
     // @User: Standard
-    AP_GROUPINFO("THR_MAX_PWM", 23, QuadPlane, thr_max_pwm, 2000),
+    // 23: THR_MAX_PWM
 
     // @Param: ASSIST_SPEED
     // @DisplayName: Quadplane assistance speed
@@ -507,6 +507,9 @@ const AP_Param::ConversionInfo q_conversion_table[] = {
     { Parameters::k_param_quadplane, 55,  AP_PARAM_FLOAT,  "Q_TILT_YAW_ANGLE" },
     { Parameters::k_param_quadplane, 1467,  AP_PARAM_FLOAT,  "Q_TILT_FIX_ANGLE" },
     { Parameters::k_param_quadplane, 1531,  AP_PARAM_FLOAT,  "Q_TILT_FIX_GAIN" },
+
+    { Parameters::k_param_quadplane, 22,  AP_PARAM_INT16, "Q_M_PWM_MIN" },
+    { Parameters::k_param_quadplane, 23,  AP_PARAM_INT16, "Q_M_PWM_MAX" },
 };
 
 
@@ -672,7 +675,7 @@ bool QuadPlane::setup(void)
     AP_Param::load_object_from_eeprom(loiter_nav, loiter_nav->var_info);
 
     motors->init(frame_class, frame_type);
-    motors->set_throttle_range(thr_min_pwm, thr_max_pwm);
+    motors->update_throttle_range();
     motors->set_update_rate(rc_speed);
     motors->set_interlock(true);
     attitude_control->parameter_sanity_check();
@@ -682,7 +685,7 @@ bool QuadPlane::setup(void)
     // failsafe will disable motors
     for (uint8_t i=0; i<8; i++) {
         SRV_Channel::Aux_servo_function_t func = SRV_Channels::get_motor_function(i);
-        SRV_Channels::set_failsafe_pwm(func, thr_min_pwm);
+        SRV_Channels::set_failsafe_pwm(func, motors->get_pwm_output_min());
     }
 
     transition_state = TRANSITION_DONE;
@@ -2079,11 +2082,12 @@ void QuadPlane::run_xy_controller(void)
  */
 void QuadPlane::poscontrol_init_approach(void)
 {
+    const float dist = plane.current_loc.get_distance(plane.next_WP_loc);
     if ((options & OPTION_DISABLE_APPROACH) != 0) {
         // go straight to QPOS_POSITION1
         poscontrol.set_state(QPOS_POSITION1);
+        gcs().send_text(MAV_SEVERITY_INFO,"VTOL Position1 d=%.1f", dist);
     } else if (poscontrol.get_state() != QPOS_APPROACH) {
-        const float dist = plane.current_loc.get_distance(plane.next_WP_loc);
         gcs().send_text(MAV_SEVERITY_INFO,"VTOL approach d=%.1f", dist);
         poscontrol.set_state(QPOS_APPROACH);
         poscontrol.thrust_loss_start_ms = 0;
@@ -2304,17 +2308,9 @@ void QuadPlane::vtol_position_controller(void)
     case QPOS_POSITION1: {
         setup_target_position();
 
-        if (tailsitter.enabled()) {
-            if (tailsitter.in_vtol_transition()) {
-                break;
-            }
-            poscontrol.set_state(QPOS_POSITION2);
-            poscontrol.pilot_correction_done = false;
-            gcs().send_text(MAV_SEVERITY_INFO,"VTOL position2 started v=%.1f d=%.1f",
-                                    (double)ahrs.groundspeed(), (double)plane.auto_state.wp_distance);
+        if (tailsitter.enabled() && tailsitter.in_vtol_transition()) {
             break;
         }
-
 
         const Vector2f diff_wp = plane.current_loc.get_distance_NE(loc);
         const float distance = diff_wp.length();
@@ -2366,25 +2362,27 @@ void QuadPlane::vtol_position_controller(void)
         plane.nav_roll_cd = pos_control->get_roll_cd();
         plane.nav_pitch_cd = pos_control->get_pitch_cd();
 
-        /*
-          limit the pitch down with an expanding envelope. This
-          prevents the velocity controller demanding nose down during
-          the initial slowdown if the target velocity curve is higher
-          than the actual velocity curve (for a high drag
-          aircraft). Nose down will cause a lot of downforce on the
-          wings which will draw a lot of current and also cause the
-          aircraft to lose altitude rapidly.pitch limit varies also with speed
-          to prevent inability to progress to position if moving from a loiter
-          to landing
-         */
-        float minlimit_cd = linear_interpolate(-300, MAX(-aparm.angle_max,plane.aparm.pitch_limit_min_cd),
-                                               poscontrol.time_since_state_start_ms(),
-                                               0, 5000);
-        if (plane.nav_pitch_cd < minlimit_cd) {
-            plane.nav_pitch_cd = minlimit_cd;
-            // tell the pos controller we have limited the pitch to
-            // stop integrator buildup
-            pos_control->set_externally_limited_xy();
+        if (!tailsitter.enabled()) {
+            /*
+              limit the pitch down with an expanding envelope. This
+              prevents the velocity controller demanding nose down during
+              the initial slowdown if the target velocity curve is higher
+              than the actual velocity curve (for a high drag
+              aircraft). Nose down will cause a lot of downforce on the
+              wings which will draw a lot of current and also cause the
+              aircraft to lose altitude rapidly.pitch limit varies also with speed
+              to prevent inability to progress to position if moving from a loiter
+              to landing
+            */
+            float minlimit_cd = linear_interpolate(-300, MAX(-aparm.angle_max,plane.aparm.pitch_limit_min_cd),
+                                                   poscontrol.time_since_state_start_ms(),
+                                                   0, 5000);
+            if (plane.nav_pitch_cd < minlimit_cd) {
+                plane.nav_pitch_cd = minlimit_cd;
+                // tell the pos controller we have limited the pitch to
+                // stop integrator buildup
+                pos_control->set_externally_limited_xy();
+            }
         }
 
         // call attitude controller
@@ -2534,6 +2532,12 @@ void QuadPlane::vtol_position_controller(void)
 #endif
             float zero = 0;
             float target_z = target_altitude_cm;
+            pos_control->input_pos_vel_accel_z(target_z, zero, 0);
+        } else if (plane.control_mode == &plane.mode_qrtl) {
+            Location loc2 = loc;
+            loc2.change_alt_frame(Location::AltFrame::ABOVE_ORIGIN);
+            float target_z = loc2.alt;
+            float zero = 0;
             pos_control->input_pos_vel_accel_z(target_z, zero, 0);
         } else {
             set_climb_rate_cms(0, false);

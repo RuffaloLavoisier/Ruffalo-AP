@@ -320,9 +320,6 @@ def do_build(opts, frame_options):
     if opts.tonealarm:
         cmd_configure.append("--enable-sfml-audio")
 
-    if opts.flash_storage:
-        cmd_configure.append("--sitl-flash-storage")
-
     if opts.math_check_indexes:
         cmd_configure.append("--enable-math-check-indexes")
 
@@ -671,6 +668,12 @@ def start_vehicle(binary, opts, stuff, spawns=None):
                 sys.exit(1)
         path = ",".join(paths)
         progress("Using defaults from (%s)" % (path,))
+    if opts.flash_storage:
+        cmd.append("--set-storage-flash-enabled 1")
+        cmd.append("--set-storage-posix-enabled 0")
+    elif opts.fram_storage:
+        cmd.append("--set-storage-fram-enabled 1")
+        cmd.append("--set-storage-posix-enabled 0")
     if opts.add_param_file:
         for file in opts.add_param_file:
             if not os.path.isfile(file):
@@ -1105,7 +1108,10 @@ group_sim.add_option("-Z", "--swarm",
                      help="Specify path of swarminit.txt for shifting spawn location")
 group_sim.add_option("--flash-storage",
                      action='store_true',
-                     help="enable use of flash storage emulation")
+                     help="use flash storage emulation")
+group_sim.add_option("--fram-storage",
+                     action='store_true',
+                     help="use fram storage emulation")
 group_sim.add_option("--disable-ekf2",
                      action='store_true',
                      help="disable EKF2 in build")
